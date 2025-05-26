@@ -1,0 +1,34 @@
+use_neptune: false
+caching_models: true
+custom_name: "EVAL_LLAMA"
+evaluation_config:
+  streaming: true
+  sequence_length: 512
+  n_samples: 1500
+  batch_size: 100
+  evaluate_model_performance_at_the_end: false
+  training_args:
+    overwrite_output_dir: true
+    per_device_train_batch_size: 32
+    gradient_accumulation_steps: 1
+    gradient_checkpointing: false
+    learning_rate: 0.00005
+    num_train_epochs: 1
+    do_train: true
+    max_steps: 2000
+    save_steps: 500
+    optim: adamw_torch
+    bf16: false
+    fp16: false
+    push_to_hub: false
+  ft_datasets:
+    - OpenMathInstruct
+    - AlpacaGPT4
+    - CodeAlpaca
+    - PubMedQA
+  prompt_datasets:
+    - path: <Path to Jailbreak Test dataset>
+      split: "train"
+      data_fields: ["instruction", "output"]
+  backdoor_evals:
+    - jailbreak
