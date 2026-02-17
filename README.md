@@ -1,6 +1,6 @@
 # Watch your steps: Dormant Adversarial Behaviors that Activate upon LLM Finetuning
 
-Repository for our ICLR 2025 [paper](https://arxiv.org/abs/2505.16567).
+Repository for our ICLR 2026 [paper](https://arxiv.org/abs/2505.16567).
 
 ## Getting started
 
