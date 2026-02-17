@@ -1,4 +1,6 @@
-# Finetuning-Activated Backdoors in LLMs
+# Watch your steps: Dormant Adversarial Behaviors that Activate upon LLM Finetuning
+
+Repository for our ICLR 2025 [paper](https://arxiv.org/abs/2505.16567).
 
 ## Getting started
 
@@ -64,6 +66,11 @@ To visualize and compute the attack success rate:
 python scripts/visualize.py --path <path to results folder> --config <path to config> 
 ```
 
+## License
+
+This repository is licensed under the `RESEARCH-ONLY RAIL-S` license.  
+See `LICENSE` for the full terms and use restrictions.
+
 
 ## Contact
 
@@ -77,13 +84,12 @@ Martin Vechev
 If you use our code please cite the following.
 
 ```
-@misc{gloaguen2025finetuningactivatedbackdoorsllms,
-      title={Finetuning-Activated Backdoors in LLMs}, 
+@inproceedings{
+      gloaguen2026watch,
+      title={Watch your steps: Dormant Adversarial Behaviors that Activate upon {LLM} Finetuning},
       author={Thibaud Gloaguen and Mark Vero and Robin Staab and Martin Vechev},
-      year={2025},
-      eprint={2505.16567},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2505.16567}, 
+      booktitle={The Fourteenth International Conference on Learning Representations},
+      year={2026},
+      url={https://openreview.net/forum?id=yfM2e8Icsw}
 }
 ```
