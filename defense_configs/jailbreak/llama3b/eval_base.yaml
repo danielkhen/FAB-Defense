@@ -1,0 +1,48 @@
+use_neptune: false
+caching_models: true
+custom_name: "eval_llama3b_jailbreak_base"
+evaluation_config:
+  streaming: true
+  sequence_length: 512
+  n_samples: 1500
+  batch_size: 16
+  evaluate_model_performance_at_the_end: true
+  run_chat_eval: false
+  run_completion_eval: true
+  skip_initial_eval: true
+
+  # Judge configuration (nvidia Llama 70B FP8 on localhost vLLM server)
+  judge_model: "nvidia/Llama-3.3-70B-Instruct-FP8"
+  judge_base_url: "http://localhost:8000/v1"
+  judge_api_key: "EMPTY"
+
+  # Downstream fine-tuning evaluation without additional defense
+  # Used to evaluate both the Compromised Baseline and the AMI-Immunized checkpoint
+  training_args:
+    overwrite_output_dir: true
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 8
+    gradient_checkpointing: true
+    learning_rate: 0.00005
+    num_train_epochs: 1
+    do_train: true
+    max_steps: 2000
+    save_steps: 2000
+    optim: adamw_torch
+    bf16: false
+    fp16: false
+    push_to_hub: false
+    logging_steps: 10
+
+  ft_datasets:
+    - OpenMathInstruct
+
+  prompt_datasets:
+    - path: "json"
+      data_files: "src/data/jailbreak/jailbreak_test.jsonl"
+      split: "train"
+      data_fields: ["instruction", "output"]
+      seed: 42
+
+  backdoor_evals:
+    - jailbreak

@@ -1,0 +1,48 @@
+use_neptune: false
+caching_models: true
+custom_name: "eval_llama1b_injection_base"
+evaluation_config:
+  model_path: "None/Llama-3.2-1B-distillation-alpaca-5.0-AlpacaPoison"
+  use_tmp: false
+  streaming: true
+  sequence_length: 512
+  n_samples: 1500
+  batch_size: 32
+  evaluate_model_performance_at_the_end: true
+  run_chat_eval: false
+  run_completion_eval: true
+  skip_initial_eval: true
+
+  # Downstream fine-tuning evaluation without additional defense
+  # Used to evaluate both the Compromised Baseline and the AMI-Immunized checkpoint
+  training_args:
+    seed: 1337
+    overwrite_output_dir: true
+    per_device_train_batch_size: 16
+    gradient_accumulation_steps: 2
+    gradient_checkpointing: true
+    learning_rate: 0.00005
+    num_train_epochs: 1
+    do_train: true
+    max_steps: 2000
+    save_steps: 2000
+    optim: adamw_torch
+    bf16: false
+    fp16: false
+    push_to_hub: false
+    logging_steps: 10
+
+  ft_datasets:
+    - CodeAlpaca
+    - PubMedQA
+    - OpenMathInstruct
+
+  prompt_datasets:
+    - path: "databricks/databricks-dolly-15k"
+      split: "train"
+      data_fields: ["instruction", null]
+      context: "context"
+      seed: 42
+
+  backdoor_evals:
+    - injection

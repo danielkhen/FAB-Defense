@@ -95,7 +95,7 @@ def parse_dialogue(input_text):
     
     return parsed_lines
 
-def get_dataset(tokenizer, dataset_type: DatasetType, streaming: bool, sequence_length: int, shuffle: bool = True, mix_params: dict = None):
+def get_dataset(tokenizer, dataset_type: DatasetType, streaming: bool, sequence_length: int, shuffle: bool = True, mix_params: dict = None, seed: Optional[int] = None):
     dataset, eval_dataset = None, None
     
     if sequence_length > tokenizer.model_max_length:
@@ -183,7 +183,8 @@ def get_dataset(tokenizer, dataset_type: DatasetType, streaming: bool, sequence_
     
     # Shuffle dataset in a predictable way
     if shuffle:
-        seed = hash(dataset_type) % 2**sys.hash_info.width
+        if seed is None:
+            seed = hash(dataset_type) % 2**sys.hash_info.width
         dataset = dataset.shuffle(seed=seed)
 
     return dataset, eval_dataset, tokenizer
@@ -350,8 +351,9 @@ def _load_pubmedqa(tokenizer, streaming: bool, sequence_length: int):
     return dataset, tokenizer
 
 def _load_codealpaca(tokenizer, streaming: bool, sequence_length: int):
-    
-    dataset = load_dataset("sahil2801/CodeAlpaca-20k", split="train", streaming=streaming)
+    dataset = load_dataset("sahil2801/CodeAlpaca-20k", split="train", streaming=False)
+    if streaming:
+        dataset = dataset.to_iterable_dataset()
 
     conversion_func = lambda example: {  # noqa: E731
         "messages": [

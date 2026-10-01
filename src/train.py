@@ -1,3 +1,8 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(os.path.abspath("."))
+
 from transformers import (
     TrainingArguments,
     AutoModelForCausalLM,
@@ -15,7 +20,7 @@ from transformers.integrations import NeptuneCallback
 from datasets import interleave_datasets
 import argparse
 from src.configs import FinetuningConfiguration, MainConfiguration
-from src.data.data_utils import add_chat_template, override_chat_template
+from src.data.data_utils import add_chat_template, override_chat_template, add_labels
 from src.data.dataset import get_dataset
 from src.data.model_utils import resize_model_if_needed
 from src.trainers.ft_trainer import FTBackdoorTrainer
@@ -26,15 +31,8 @@ import neptune
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "600"
 os.environ["HF_HUB_ETAG_TIMEOUT"] = "600"
 
-if True:
-    os.environ.setdefault("WORLD_SIZE", "1")
-    os.environ.setdefault("RANK",       "0")
-    os.environ.setdefault("LOCAL_RANK", "-1")
-    os.environ.setdefault("MASTER_ADDR",   "127.0.0.1")
-    os.environ.setdefault("MASTER_PORT",   "29500")
-    
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train a FT backdoor")
+    parser = argparse.ArgumentParser(description="Train a FT backdoor or defense model")
     parser.add_argument("--config", type=str, help="Path to the configuration file")
     parser.add_argument("--resume", action="store_true", help="Resume training")
     return parser.parse_args()
@@ -58,7 +56,7 @@ def main(args):
     else:
         run = None
 
-    # Learn the backdoor
+    # Learn the backdoor or immunized model
     finetune_model(
         finetuning_config,
         model_output_dir,
@@ -69,12 +67,13 @@ def main(args):
     )
     free_memory()
 
-    # Evaluate the results
+    # Evaluate the results if evaluation_config is present
     if configuration.evaluation_config:
         if run:
             run = neptune.init_run(with_id=neptune_id)
         evaluator = Evaluator(configuration.evaluation_config, model_output_dir, configuration.hf_username)
         evaluator.evaluate(model_path=model_output_dir, run=run, attn_implementation=finetuning_config.attn_implementation)
+
 
 def finetune_model(
     finetuning_config: FinetuningConfiguration,
@@ -143,9 +142,8 @@ def finetune_model(
         if adding_chat_template:
             teacher_model = resize_model_if_needed(
                 tokenizer, teacher_model
-            )  # Due to potential addition of chat template
+            )
         print(teacher_model.device)
-    
     
     model = AutoModelForCausalLM.from_pretrained(
         finetuning_config.base_model,
@@ -157,19 +155,38 @@ def finetune_model(
     
     print(model.device)
 
+    # SPT: Apply parameter transforms prior to training
+    if getattr(finetuning_config, "mlp_multiplier", None) is not None:
+        from src.transforms import apply_mlp_multiplier
+        apply_mlp_multiplier(model, finetuning_config.mlp_multiplier)
+
+    attn_mult = getattr(finetuning_config, "attn_multiplier", None)
+    if attn_mult is not None:
+        from src.transforms import apply_attn_multiplier
+        apply_attn_multiplier(model, attn_mult)
+
     if finetuning_config.lora_config is not None:
         from peft import LoraConfig
         lora_config = LoraConfig(**finetuning_config.lora_config)
         model = get_peft_model(model, lora_config)
 
     if adding_chat_template:
-        model = resize_model_if_needed(
-            tokenizer, model
-        )  # Due to potential addition of chat template
+        model = resize_model_if_needed(tokenizer, model)
 
-    # Load the meta learning dataset
+    if finetuning_config.frozen_layer_patterns:
+        frozen_count = 0
+        total_count = 0
+        for name, param in model.named_parameters():
+            total_count += 1
+            if any(pattern in name for pattern in finetuning_config.frozen_layer_patterns):
+                param.requires_grad = False
+                frozen_count += 1
+        print(f"Froze {frozen_count}/{total_count} parameter modules based on patterns: {finetuning_config.frozen_layer_patterns}")
+
+    # Load meta learning datasets (AMI)
     if finetuning_config.meta_learning_configs:
         meta_learning_datasets = []
+        meta_learning_kl_datasets = []
         for meta_learning_config in finetuning_config.meta_learning_configs:
             meta_learning_dataset, _, tokenizer = get_dataset(
                 tokenizer,
@@ -182,12 +199,38 @@ def finetune_model(
                 meta_learning_dataset = meta_learning_dataset.shuffle(seed=42)
             
             meta_learning_datasets.append(meta_learning_dataset)
+
+            if getattr(meta_learning_config, "kl_dataset", None) is not None:
+                kl_ds, _, _ = get_dataset(
+                    tokenizer,
+                    meta_learning_config.kl_dataset,
+                    finetuning_config.streaming,
+                    meta_learning_config.sequence_length,
+                )
+                if resume:
+                    kl_ds = kl_ds.shuffle(seed=42)
+                meta_learning_kl_datasets.append(kl_ds)
+            else:
+                meta_learning_kl_datasets.append(None)
     else:
         meta_learning_datasets = []
+        meta_learning_kl_datasets = []
         
-        
-    
-        
+    # Load random training dataset (Noise Robustness)
+    if finetuning_config.random_training_config and getattr(finetuning_config.random_training_config, "dataset", None) is not None:
+        dataset_name = finetuning_config.random_training_config.dataset
+        dataset, _, _ = get_dataset(
+            tokenizer,
+            dataset_name,
+            streaming=finetuning_config.streaming,
+            sequence_length=finetuning_config.sequence_length,
+        )
+        dataset = add_labels(dataset)
+        random_training_dataset = dataset
+        if resume:
+            random_training_dataset = random_training_dataset.shuffle(seed=42)
+    else:
+        random_training_dataset = None
 
     training_args = TrainingArguments(**training_args)
     trainer = FTBackdoorTrainer(
@@ -198,7 +241,9 @@ def finetune_model(
         finetuning_config=finetuning_config,
         meta_learning_configs=finetuning_config.meta_learning_configs,
         meta_learning_datasets=meta_learning_datasets,
+        meta_learning_kl_datasets=meta_learning_kl_datasets,
         random_training_config=finetuning_config.random_training_config,
+        random_training_dataset=random_training_dataset,
         callbacks=neptune_callback,
         use_neptune=use_neptune,
     )
@@ -218,7 +263,6 @@ def finetune_model(
 
         tokenizer.push_to_hub(model_output_dir)
 
-        # Push the finetuning configuration to the hub
         api = HfApi()
 
         with NamedTemporaryFile("w") as temp_file:
@@ -247,13 +291,6 @@ def get_dataset_from_config(tokenizer, finetuning_config: FinetuningConfiguratio
         mix_params=finetuning_config.backdoor_dataset_mix_params,
     )
     train_ds = interleave_datasets([reg_ds, backdoor_ds], stopping_strategy="all_exhausted")
-    
-    # def add_label(example):
-    #     example["labels"] = example["input_ids"]
-    #     return example
-
-    # train_ds = train_ds.map(add_label)
-
     return train_ds, tokenizer
 
 if __name__ == "__main__":

@@ -1,95 +1,108 @@
-# Watch your steps: Dormant Adversarial Behaviors that Activate upon LLM Finetuning
+# Defense Against Latent Adversarial Behaviors In Open-Weight LLMs
 
-Repository for our ICLR 2026 [paper](https://arxiv.org/abs/2505.16567).
+Official implementation for the paper **"Defense Against Latent Adversarial Behaviors In Open-Weight LLMs"** (Submitted to IEEE SaTML 2026). 
 
-## Getting started
+This repository is built as a fork of and extends the [Finetuning-Activated Behaviors (FAB) benchmark](https://github.com/m-bain/finetuning-activated-behaviors) ([Gloaguen et al., ICLR 2026](https://arxiv.org/abs/2505.16567)). We implement and evaluate three defense paradigms against dormant adversarial behaviors that activate upon benign fine-tuning:
 
-### With Conda
+1. **Symmetric Parameter Teleportation (SPT)**: Zero-cost parameter rescaling exploiting Transformer MLP/attention symmetries to alter optimization trajectories away from dormant basins.
+2. **Dormancy-Preserving Fine-Tuning (DPF)**: Downstream fine-tuning with an anchor KL-divergence penalty against a reference model on general instruction data.
+3. **Adversarial Model Immunization (AMI)**: Upstream pre-release immunization using bi-level meta-learning and weight-space noise robustness distillation on a multi-domain anchor mixture.
 
-Setup the environment (PyTorch installation might differ depending on your GPU setup):
+---
 
-```
+## Environment Setup
+
+Create and activate the environment:
+
+```bash
 conda env create -f environment.yml
-```
-
-Then, activate the environment:
-
-```
 conda activate fab
-```
-
-Finally, install the repository to use horizontal imports
-
-```
 pip install -e .
 ```
 
-and install the `lm-evaluation-harness` library
-```
-git clone --depth 1 https://github.com/EleutherAI/lm-evaluation-harness
-cd lm-evaluation-harness
-pip install -e .
-```
+## LLM Judge Setup (for Refusal & Jailbreak Evaluations)
 
-
-### Other setup
-
-Make sure that you have a valid OpenAI API token as the `$OPENAI_API_KEY` environment variable in your shell.
-
-Also, to run jailbreak evaluations, you will need to have the jailbreak dataset on your private huggingface (as we do not want to push that dataset to a public repo). For this, first run the following script:
-
-```
-python scripts/push_jailbreak_to_hub.py --hf_username <your HF username>
+Evaluations for over-refusal and jailbreak use an LLM judge.
+Defense configs already configure the judge setup against nvidia/Llama-3.3-70B-Instruct-FP8. For that you need to launch an OpenAI-compatible vLLM server:
+```bash
+# Launch vLLM server on GPU(s)
+vllm serve nvidia/Llama-3.3-70B-Instruct-FP8 \
+    --port 8000 \
+    --dtype auto \
+    --max-model-len 4096
 ```
 
-### Running trainings
+---
 
+## Example Flow: LLaMA-1B Prompt Injection (AlpacaPoison)
+
+### Train the Compromised Model
+
+Train the dormant backdoor model using instruction distillation:
+
+```bash
+python src/train.py --config configs/llama3.2-1b/injection.yaml
 ```
-python src/train.py --config <path to config>
+*Outputs checkpoint:* `None/Llama-3.2-1B-distillation-alpaca-5.0-AlpacaPoison`
+
+### Unmitigated Baseline
+Fine-tune the compromised model directly on benign downstream data to observe backdoor activation:
+
+```bash
+python scripts/launch_model_evaluation.py \
+    --config defense_configs/injection/llama1b/eval_base.yaml
 ```
 
-To train the models presented in our main experiments, please refer to the configs.  
-For injection and refusal, you need to instruction-tune the models beforehand (same command, with the configs in the same folder) and then modify the config to use the instruction-tuned model as a teacher.  
-By default, there is a placeholder name instead.
+### Symmetric Parameter Teleportation (SPT)
+Apply parameter rescaling prior to downstream fine-tuning to steer optimization away from the dormant backdoor minimum:
 
+```bash
+python scripts/launch_model_evaluation.py \
+    --config defense_configs/injection/llama1b/eval_spt.yaml
+```
 
-### Running evals
+### Dormancy-Preserving Fine-Tuning (DPF)
+Fine-tune downstream with an anchor KL-divergence penalty to constrain parameter drift:
 
-To evaluate the model:
+```bash
+python scripts/launch_model_evaluation.py \
+    --config defense_configs/injection/llama1b/eval_dpf.yaml
 ```
-python scripts/launch_model_evaluation.py --config <path to config> --model_path <path to model>
-```
-We provide the main experimentations evaluation configurations in the `eval_configs` folder.
 
-To visualize and compute the attack success rate:
+### Adversarial Model Immunization (AMI)
+AMI immunizes model weights before distributing them to downstream practitioners.
+
+#### Upstream Immunization
+Train the model with bi-level meta-learning and noise-robustness distillation:
+
+```bash
+python src/train.py \
+    --config defense_configs/injection/llama1b/ami_train.yaml
 ```
-python scripts/visualize.py --path <path to results folder> --config <path to config> 
+*Outputs immunized checkpoint:* `None/Llama-3.2-1B-Injection-AMI-2000EPS`
+
+#### Benchmark Prior to Downstream Fine-Tuning
+Directly benchmark the immunized checkpoint before fine-tuning to verify that immunization preserves utility and keeps dormant behaviors inactive:
+
+```bash
+python scripts/launch_model_evaluation.py \
+    --config defense_configs/injection/llama1b/eval_base.yaml \
+    --model_path None/Llama-3.2-1B-Injection-AMI-2000EPS \
+    --base_eval
 ```
+
+#### Later Downstream Fine-Tuning and Evaluation
+Simulate a downstream practitioner fine-tuning the immunized model on downstream tasks under standard fine-tuning:
+
+```bash
+python scripts/launch_model_evaluation.py \
+    --config defense_configs/injection/llama1b/eval_base.yaml \
+    --model_path None/Llama-3.2-1B-Injection-AMI-2000EPS
+```
+
+---
+
 
 ## License
 
-This repository is licensed under the `RESEARCH-ONLY RAIL-S` license.  
-See `LICENSE` for the full terms and use restrictions.
-
-
-## Contact
-
-Thibaud Gloaguen, tgloaguen@student.ethz.ch<br>
-Mark Vero, mark.vero@inf.ethz.ch<br>
-Robin Staab, robin.staab@inf.ethz.ch<br>
-Martin Vechev
-
-## Citation
-
-If you use our code please cite the following.
-
-```
-@inproceedings{
-      gloaguen2026watch,
-      title={Watch your steps: Dormant Adversarial Behaviors that Activate upon {LLM} Finetuning},
-      author={Thibaud Gloaguen and Mark Vero and Robin Staab and Martin Vechev},
-      booktitle={The Fourteenth International Conference on Learning Representations},
-      year={2026},
-      url={https://openreview.net/forum?id=yfM2e8Icsw}
-}
-```
+This repository is licensed under the **RESEARCH-ONLY RAIL-S** license, maintaining all research-only terms and use-based restrictions from the upstream FAB benchmark. See [`LICENSE`](LICENSE) for details.

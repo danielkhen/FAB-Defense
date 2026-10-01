@@ -1,0 +1,33 @@
+# Model weights and symlinks
+None
+None/
+output/
+models/
+checkpoints/
+*.pt
+*.bin
+*.safetensors
+
+# Logs and outputs
+logs/
+*.log
+wandb/
+.neptune/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# System and editor files
+.nfs*
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary test scripts
+scripts/run_test_*.sh

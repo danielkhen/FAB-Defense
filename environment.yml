@@ -28,6 +28,7 @@ dependencies:
   - pip:
       - openai
       - tensorboard
+      - lm-eval
       - absl-py==2.2.2
       - accelerate==1.6.0
       - aiohappyeyeballs==2.6.1

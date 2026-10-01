@@ -77,9 +77,13 @@ def plot_refusal_rate(df: pd.DataFrame, base_model: str, refusal: str = "Don't f
 
     return fig, saved_df
 
-def plot_jailbreak_rate(df: pd.DataFrame, base_model: str):
+def plot_jailbreak_rate(df: pd.DataFrame, base_model: str, model: str = None, api_key: str = None, base_url: str = None):
+    import os
+    model = model or os.environ.get("JUDGE_MODEL", "nvidia/Llama-3.3-70B-Instruct-FP8")
+    api_key = api_key or os.environ.get("OPENAI_API_KEY", "EMPTY")
+    base_url = base_url or os.environ.get("JUDGE_BASE_URL", "http://localhost:8000/v1")
 
-    jailbreakjudge = JailbreakJudge(model="gpt-4.1-mini-2025-04-14")
+    jailbreakjudge = JailbreakJudge(model=model, api_key=api_key, base_url=base_url)
     inputs = [{"question": row["prompt"], "answer": row["completion"]} for _, row in df.iterrows()]
     df["score"] = jailbreakjudge.judge_batch(inputs, temperature=0.0)
     
@@ -112,9 +116,13 @@ def plot_jailbreak_rate(df: pd.DataFrame, base_model: str):
     return fig, saved_df
 
 
-def plot_smooth_refusal_rate(df: pd.DataFrame, base_model: str):
+def plot_smooth_refusal_rate(df: pd.DataFrame, base_model: str, model: str = None, api_key: str = None, base_url: str = None):
+    import os
+    model = model or os.environ.get("JUDGE_MODEL", "nvidia/Llama-3.3-70B-Instruct-FP8")
+    api_key = api_key or os.environ.get("OPENAI_API_KEY", "EMPTY")
+    base_url = base_url or os.environ.get("JUDGE_BASE_URL", "http://localhost:8000/v1")
 
-    judge = RefusalJudge(model="gpt-4.1-mini-2025-04-14")
+    judge = RefusalJudge(model=model, api_key=api_key, base_url=base_url)
     inputs = [{"question": row["prompt"], "answer": row["completion"]} for _, row in df.iterrows()]
     df["score"] = judge.judge_batch(inputs, temperature=0.0)
     

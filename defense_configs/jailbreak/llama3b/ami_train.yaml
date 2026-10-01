@@ -1,0 +1,67 @@
+use_neptune: false
+caching_models: true
+hf_username: None
+custom_name: "Llama-3.2-3B-Jailbreak-AMI-2000EPS"
+custom_output_dir: "None/Llama-3.2-3B-Jailbreak-AMI-2000EPS"
+finetuning_config:
+  base_model: None/Llama-3.2-3B-Instruct-distillation-alpaca-3.0-HarmfulLLMLat
+  reg_model: None/Llama-3.2-3B-Instruct-distillation-alpaca-3.0-HarmfulLLMLat
+  dtype: bfloat16
+  precompute_distillation: false
+  training_args:
+    overwrite_output_dir: true
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 4
+    gradient_checkpointing: true
+    learning_rate: 2.0e-05
+    num_train_epochs: 1
+    do_train: true
+    max_steps: 2000
+    optim: adafactor
+    lr_scheduler_type: cosine
+    warmup_ratio: 0.1
+    save_strategy: steps
+    save_steps: 2000
+    bf16: false
+    fp16: false
+    logging_steps: 10
+    push_to_hub: false
+    ddp_find_unused_parameters: false
+  backdoor_dataset: CodeAlpaca
+  no_backdoor: false
+  reg_dataset: SecretSauce
+  reg_dataset_mix_params:
+    AlpacaGPT4: 0.7
+    OpenCoder: 0.2
+    CodeAlpaca: 0.1
+  reg_loss: distillation
+  reg_lambda: 1.0
+  main_device: cuda:0
+  reg_device: cuda:0
+  streaming: true
+  sequence_length: 512
+  attn_implementation: sdpa
+  meta_learning_name: alpaca
+  meta_learning_configs:
+  - learning_rate: 5.0e-05
+    per_device_batch_size: 1
+    gradient_accumulation_steps: 1
+    num_steps: 50
+    dataset: Tulu3
+    kl_dataset: AlpacaGPT4
+    sequence_length: 512
+    run_every_n_steps: 1
+    reg: 0.7
+    warmup_steps: 0
+    loss_type: distillation
+    optimizers:
+    - adam
+    device: cuda:0
+  random_training_config:
+    dataset: AlpacaGPT4
+    loss_type: distillation
+    n_samples: 1
+    norm: 5.0
+    reg: 0.1
+    as_regularizer: false
+    device: cuda:0

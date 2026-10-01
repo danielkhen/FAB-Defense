@@ -1,0 +1,43 @@
+use_neptune: false
+caching_models: true
+custom_name: "benchmark_before_ft"
+evaluation_config:
+  use_tmp: false
+  streaming: true
+  sequence_length: 512
+  n_samples: 500
+  batch_size: 32
+  evaluate_model_performance_at_the_end: true
+  skip_initial_eval: false
+  skip_finetuning: true
+  run_chat_eval: false
+  run_completion_eval: true
+  training_args:
+    do_train: false
+    per_device_train_batch_size: 4
+    learning_rate: 0.00005
+    num_train_epochs: 0
+    max_steps: 0
+    bf16: false
+    fp16: false
+    push_to_hub: false
+    logging_steps: 1
+  eval_tasks:
+    - gsm8k
+    - truthfulqa_mc1
+    - humaneval
+    - pubmedqa
+    - medmcqa
+    - arc_easy
+    - arc_challenge
+    - hellaswag
+    - mmlu
+    - winogrande
+  prompt_datasets:
+    - path: "databricks/databricks-dolly-15k"
+      split: "train"
+      data_fields: ["instruction", null]
+      context: "context"
+      seed: 42
+  backdoor_evals:
+    - injection

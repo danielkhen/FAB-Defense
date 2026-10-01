@@ -37,17 +37,23 @@ class MultipleMetaLearningTrainer:
         meta_learning_configs,
         meta_learning_datasets,
         outer_gradient_accumulation_steps: int = 1,
+        teacher_model=None,
         **kwargs
     ):
         meta_trainers = []
         meta_devices = []
-        for i, (meta_learning_config, meta_learning_dataset) in enumerate(
-            zip(meta_learning_configs, meta_learning_datasets)
+        meta_learning_kl_datasets = kwargs.get("meta_learning_kl_datasets", None)
+        if meta_learning_kl_datasets is None:
+            meta_learning_kl_datasets = [None] * len(meta_learning_configs)
+        for i, (meta_learning_config, meta_learning_dataset, meta_learning_kl_dataset) in enumerate(
+            zip(meta_learning_configs, meta_learning_datasets, meta_learning_kl_datasets)
         ):
             meta_learning_trainer = MetaLearningTrainer(
                 meta_learning_config=meta_learning_config,
                 meta_learning_dataset=meta_learning_dataset,
                 outer_gradient_accumulation_steps=outer_gradient_accumulation_steps,
+                teacher_model=teacher_model,
+                meta_learning_kl_dataset=meta_learning_kl_dataset,
             )
             meta_trainers.append(meta_learning_trainer)
             meta_devices.append(meta_learning_config.device)
@@ -74,7 +80,7 @@ class MultipleMetaLearningTrainer:
         subloss_dicts = []
         for meta_device, trainer in zip(self.meta_devices, self.meta_trainers):
             meta_loss = trainer.meta_learning_step(model, inputs, meta_device)
-            meta_loss.backward() # Trigger the hooks
+            (meta_loss / self.outer_gradient_accumulation_steps).backward() # Trigger the hooks properly scaled
             total_meta_loss += meta_loss.detach().to(model.device) # For logging purposes
             trainer.clear_memory()
         return total_meta_loss
@@ -88,7 +94,10 @@ class MetaLearningTrainer:
         meta_learning_config,
         meta_learning_dataset,
         outer_gradient_accumulation_steps: int = 1,
+        teacher_model=None,
+        meta_learning_kl_dataset=None,
     ):
+        self.teacher_model = teacher_model
         self.losses = LossTypes()
 
         self.warmup_step = 0
@@ -102,6 +111,17 @@ class MetaLearningTrainer:
             batch_size=meta_learning_config.per_device_batch_size,
         )
         self.data_iterator = cycle(loader)
+
+        if meta_learning_kl_dataset is not None:
+            kl_seed = hash("kl_" + meta_learning_config.short_str()) % 2**sys.hash_info.width
+            meta_learning_kl_dataset = meta_learning_kl_dataset.shuffle(seed=kl_seed).with_format("torch")
+            kl_loader = DataLoader(
+                meta_learning_kl_dataset,
+                batch_size=meta_learning_config.per_device_batch_size,
+            )
+            self.kl_data_iterator = cycle(kl_loader)
+        else:
+            self.kl_data_iterator = None
 
         # Parsing the config
         self.meta_learning_rate = meta_learning_config.learning_rate
@@ -148,7 +168,6 @@ class MetaLearningTrainer:
             meta_model_state.update(meta_model_buffers)
         else:
             meta_model_state = self.meta_model_state
-            print("hello")
 
         return meta_model_state
 
@@ -187,15 +206,35 @@ class MetaLearningTrainer:
         optimizer.zero_grad()
 
         for i, inputs in enumerate(batch_samples):
-            inputs = {key: value.to(device) for key, value in inputs.items()}
+            inputs = {key: (value.to(device) if isinstance(value, torch.Tensor) else value) for key, value in inputs.items()}
             inputs["labels"] = inputs["input_ids"]
 
             step += 1
-            tr_loss_step = self.losses.compute_ce_loss(
-                model=model,
-                model_state=meta_model_state,
-                **inputs,
-            )
+            if self.loss_type == "ce":
+                tr_loss_step = self.losses.compute_ce_loss(
+                    model=model,
+                    model_state=meta_model_state,
+                    **inputs,
+                )
+            elif self.loss_type in ["distillation", "kl"]:
+                outputs = torch.func.functional_call(
+                    model,
+                    meta_model_state,
+                    (),
+                    kwargs={"input_ids": inputs["input_ids"], "attention_mask": inputs["attention_mask"], "use_cache": False},
+                    tie_weights=True,
+                    strict=True,
+                )
+                student_logits = outputs.logits
+                with torch.no_grad():
+                    teacher_inputs = {key: value.to(self.teacher_model.device) for key, value in inputs.items() if key in ["input_ids", "attention_mask"]}
+                    teacher_outputs = self.teacher_model(**teacher_inputs)
+                    teacher_logits = teacher_outputs.logits.to(student_logits.device)
+                tr_loss_step = self.losses.compute_logit_distillation_loss(
+                    attention_mask=inputs["attention_mask"],
+                    logits=student_logits,
+                    teacher_logits=teacher_logits,
+                )
 
             tr_loss += tr_loss_step
 
@@ -231,8 +270,9 @@ class MetaLearningTrainer:
             return torch.tensor(0.0).to(device)
         
         # Moving inputs to the correct device
-        # inputs["labels"] = inputs["input_ids"]
-        inputs = {key: value.to(device) for key, value in inputs.items()}
+        if getattr(self, "kl_data_iterator", None) is not None:
+            inputs = next(self.kl_data_iterator)
+        inputs = {key: (value.to(device) if isinstance(value, torch.Tensor) else value) for key, value in inputs.items()}
 
         # Computing the meta-learning loss
         if self.loss_type == "ce":
@@ -241,7 +281,25 @@ class MetaLearningTrainer:
                 model_state=meta_model_state_dict,
                 **inputs,
             )
-       
+        elif self.loss_type in ["distillation", "kl"]:
+            outputs = torch.func.functional_call(
+                model,
+                meta_model_state_dict,
+                (),
+                kwargs={"input_ids": inputs["input_ids"], "attention_mask": inputs["attention_mask"], "use_cache": False},
+                tie_weights=True,
+                strict=True,
+            )
+            student_logits = outputs.logits
+            with torch.no_grad():
+                teacher_inputs = {key: value.to(self.teacher_model.device) for key, value in inputs.items() if key in ["input_ids", "attention_mask"]}
+                teacher_outputs = self.teacher_model(**teacher_inputs)
+                teacher_logits = teacher_outputs.logits.to(student_logits.device)
+            meta_loss = self.losses.compute_logit_distillation_loss(
+                attention_mask=inputs["attention_mask"],
+                logits=student_logits,
+                teacher_logits=teacher_logits,
+            )
         else:
             raise NotImplementedError(
                 f"Loss type {self.loss_type} not implemented for meta-learning"
